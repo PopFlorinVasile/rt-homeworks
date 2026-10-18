@@ -34,6 +34,7 @@ public class CsvStorage {
      * pentru fiecare tip de mesaj). Este synchronized, ca două thread-uri să nu
      * scrie în același timp și să nu se amestece liniile.
      */
+
     public synchronized void append(String kind, String message) {
         Path file = directory.resolve(kind + ".csv");
         try {

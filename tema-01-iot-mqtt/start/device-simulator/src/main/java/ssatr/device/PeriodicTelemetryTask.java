@@ -2,14 +2,6 @@ package ssatr.device;
 
 import java.util.concurrent.BlockingQueue;
 
-/**
- * TASK PERIODIC, cu perioada T = periodMs: fiecare job citește senzorul și
- * publică valoarea pe topic-ul de telemetrie.
- *
- * Dacă temperatura depășește pragul, taskul NU tratează el alarma, ci doar
- * semnalează un eveniment în coada alarmEvents. Alarma este tratată de
- * taskul sporadic.
- */
 public class PeriodicTelemetryTask implements Runnable {
 
     private final String deviceId;
@@ -17,12 +9,10 @@ public class PeriodicTelemetryTask implements Runnable {
     private final MqttConnection mqtt;
     private final BlockingQueue<Double> alarmEvents;
 
-    // volatile: sunt citite aici, dar modificate de taskul aperiodic (alt thread)
     private volatile long periodMs = 2000;
     private volatile double threshold = 28.0;
 
-    public PeriodicTelemetryTask(String deviceId, TemperatureSensor sensor, MqttConnection mqtt,
-                                 BlockingQueue<Double> alarmEvents) {
+    public PeriodicTelemetryTask(String deviceId, TemperatureSensor sensor, MqttConnection mqtt, BlockingQueue<Double> alarmEvents) {
         this.deviceId = deviceId;
         this.sensor = sensor;
         this.mqtt = mqtt;
@@ -31,37 +21,28 @@ public class PeriodicTelemetryTask implements Runnable {
 
     @Override
     public void run() {
-        // TODO 1: implementați bucla taskului periodic. Fiecare job:
-        //   - citiți temperatura: sensor.read()
-        //   - publicați pe Config.telemetryTopic(deviceId) mesajul "deviceId;timestamp;temperatura"
-        //     (timestamp = System.currentTimeMillis(); temperatura cu punct zecimal,
-        //      de ex. String.format(Locale.US, "%.2f", t), ca să poată fi citită
-        //      cu Double.parseDouble în business-service)
-        //   - dacă temperatura > threshold, puneți valoarea în coada alarmEvents
-        //
-        // Folosiți așteptare absolută, nu relativă: Thread.sleep(periodMs) după
-        // fiecare job duce la derivă (perioada reală devine T + C + întârzieri).
-        // Calculați eliberarea următorului job pe grilă (next = next + periodMs)
-        // și așteptați doar cât a mai rămas până la ea. Pentru grilă folosiți
-        // un timp monoton: System.nanoTime().
-        //
-        // periodMs se poate schimba în timpul rulării (comanda SET_INTERVAL),
-        // deci citiți-l la fiecare job.
+        long nextReleaseTime = System.currentTimeMillis();
+        while (!Thread.currentThread().isInterrupted()) {
+            try {
+                long sleepTime = nextReleaseTime - System.currentTimeMillis();
+                if (sleepTime > 0) Thread.sleep(sleepTime);
+
+                double temp = sensor.read();
+                String payload = deviceId + ";" + System.currentTimeMillis() + ";" + temp;
+                mqtt.publish(Config.telemetryTopic(deviceId), payload);
+
+                if (temp > threshold) {
+                    alarmEvents.offer(temp); // Adăugăm direct valoarea Double
+                }
+                nextReleaseTime += periodMs;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
-    public void setPeriodMs(long periodMs) {
-        this.periodMs = periodMs;
-    }
-
-    public void setThreshold(double threshold) {
-        this.threshold = threshold;
-    }
-
-    public long getPeriodMs() {
-        return periodMs;
-    }
-
-    public double getThreshold() {
-        return threshold;
-    }
+    public void setPeriodMs(long periodMs) { this.periodMs = periodMs; }
+    public void setThreshold(double threshold) { this.threshold = threshold; }
+    public long getPeriodMs() { return periodMs; }
+    public double getThreshold() { return threshold; }
 }
